@@ -8,28 +8,26 @@ const SERP_CONFIG = {
   "Avvo": {
     "name": "Avvo",
     // The selector for the main container of a single lawyer listing on the SERP
-    "listingContainer": '[data-test-id="search-results-list"] .v-serp-block-list-item',
+    "listingContainer": ".organic-card",
     "fields": {
       // Selectors are relative to the listingContainer
       "businessName": {
-        "selector": '[data-test-id="search-result-name"]',
+        "selector": "a.search-result-lawyer-name",
       },
       "directoryProfileUrl": {
-        "selector": 'a[data-test-id="search-result-name-link"]',
+        "selector": "a.search-result-lawyer-name",
         "attribute": "href", // We need the href attribute, not the text
       },
       "rating": {
-        // Avvo rating is often part of a larger string, which might require
-        // more complex parsing later. For now, we grab what we can.
-        "selector": "[data-test-id='search-result-rating-text']",
+        "selector": ".review-score",
         "defaultValue": "N/A"
       },
        "reviewCount": {
-        "selector": "a[data-test-id='search-result-reviews-link']",
+        "selector": ".review-count",
         "defaultValue": "0"
       },
       "locationSnippet": {
-        "selector": '[data-test-id="search-result-location"]',
+        "selector": ".address",
         "defaultValue": "N/A"
       }
     }
