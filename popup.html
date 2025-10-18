@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>SP.pro Bulk Scraper</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { width: 450px; font-family: 'Inter', sans-serif; }
+    /* Simple custom scrollbar for the table */
+    .table-container::-webkit-scrollbar { width: 8px; }
+    .table-container::-webkit-scrollbar-track { background: #f1f5f9; }
+    .table-container::-webkit-scrollbar-thumb { background-color: #94a3b8; border-radius: 10px; border: 2px solid #f1f5f9; }
+    .table-container { max-height: 200px; overflow-y: auto; }
+  </style>
+</head>
+<body class="bg-slate-100 p-4">
+
+  <h1 class="text-xl font-bold text-slate-800 mb-3">SitePerf.pro Bulk Scraper</h1>
+
+  <!-- Main Controls -->
+  <div class="grid grid-cols-2 gap-3 mb-3">
+    <div>
+      <label for="directory-selector" class="block text-sm font-medium text-slate-700">Directory</label>
+      <select id="directory-selector" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"></select>
+    </div>
+    <button id="scrape-btn" class="self-end w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg shadow-sm hover:bg-blue-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50">
+      Scrape This Page
+    </button>
+  </div>
+
+  <!-- Status Bar and Export/Clear Buttons -->
+  <div class="bg-white p-3 rounded-lg shadow-md mb-3">
+    <div class="flex justify-between items-center text-sm">
+      <span id="status-bar" class="font-medium text-slate-700">Prospects collected: 0</span>
+      <div class="flex gap-2">
+        <button id="export-json-btn" class="text-xs bg-gray-200 hover:bg-gray-300 text-slate-800 font-semibold py-1 px-3 rounded-md disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed">Export JSON</button>
+        <button id="clear-btn" class="text-xs bg-red-500 hover:bg-red-600 text-white font-semibold py-1 px-3 rounded-md">Clear List</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Data Preview Table -->
+  <div class="bg-white rounded-lg shadow-md table-container">
+    <table class="w-full text-sm text-left text-slate-600">
+      <thead class="text-xs text-slate-700 uppercase bg-slate-50 sticky top-0">
+        <tr>
+          <th scope="col" class="px-4 py-2">Business Name</th>
+          <th scope="col" class="px-4 py-2">Location</th>
+          <th scope="col" class="px-4 py-2">Rating</th>
+        </tr>
+      </thead>
+      <tbody id="preview-table-body">
+        <!-- Rows will be inserted here by popup.js -->
+        <tr class="bg-white"><td colspan="3" class="text-center p-4 text-slate-400">No prospects collected yet.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  
+  <!-- Scripts are loaded at the end of the body -->
+  <script src="config.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
+
