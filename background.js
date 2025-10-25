@@ -51,22 +51,23 @@ function openDb() {
 // --- Database Operations ---
 
 async function createBatchInDb(name) {
-     if (!name) return { success: false, error: 'Batch name cannot be empty.' };
+    if (!name) return { success: false, error: 'Batch name cannot be empty.' };
 
     try {
         const dbInstance = await openDb();
-        const transaction = dbInstance.transaction(BATCHES_STORE_NAME, 'readwrite');
-        const store = transaction.objectStore(BATCHES_STORE_NAME);
-
-        // Check if name already exists
-        const existingBatches = await getAllBatchesFromDb(dbInstance); // Use existing connection
+        
+        // Check if name already exists - moved BEFORE transaction
+        const existingBatches = await getAllBatchesFromDb(dbInstance);
         if (existingBatches.some(batch => batch.name.toLowerCase() === name.toLowerCase())) {
             return { success: false, error: 'Batch name already exists.' };
         }
 
+        // Now create the transaction
+        const transaction = dbInstance.transaction(BATCHES_STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(BATCHES_STORE_NAME);
 
         const newBatch = {
-            id: crypto.randomUUID(), // Generate unique ID
+            id: crypto.randomUUID(),
             name: name,
             createdAt: new Date().toISOString(),
             lastSavedAt: null,
@@ -75,11 +76,12 @@ async function createBatchInDb(name) {
 
         return new Promise((resolve, reject) => {
             const request = store.add(newBatch);
+            
             request.onsuccess = () => {
                 console.log("Batch added:", newBatch);
-                 // *** FIX: Include the newBatch object in the success response ***
                 resolve({ success: true, newBatch: newBatch });
             };
+            
             request.onerror = (event) => {
                 console.error("Error adding batch:", event.target.error);
                 reject({ success: false, error: event.target.error });
