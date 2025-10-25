@@ -261,9 +261,11 @@ function showStatus(message, isError = false, isLoading = false) {
     }
 }
 
-
 // --- Initial Load ---
 document.addEventListener('DOMContentLoaded', () => {
     loadBatches(); // Load batches when popup opens
 });
 
+window.addEventListener('unload', () => {
+    clearTimeout(statusTimeout);
+});
