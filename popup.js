@@ -1,102 +1,320 @@
-// popup.js - Logic for the extension's popup user interface
+// popup.js - Logic for the HTML Archiver popup window (IndexedDB with Batches)
 
-document.addEventListener('DOMContentLoaded', () => {
-  // UI Element References
-  const directorySelector = document.getElementById('directory-selector');
-  const scrapeBtn = document.getElementById('scrape-btn');
-  const exportJsonBtn = document.getElementById('export-json-btn');
-  const clearBtn = document.getElementById('clear-btn');
-  const statusBar = document.getElementById('status-bar');
-  const tableBody = document.getElementById('preview-table-body');
+// --- DOM Elements ---
+const batchSelect = document.getElementById('batch-select');
+const pageCountEl = document.getElementById('page-count');
+const saveBtn = document.getElementById('save-page-btn');
+const exportBtn = document.getElementById('export-data-btn');
+const deleteBtn = document.getElementById('delete-batch-btn'); // Renamed from clearBtn
+const statusMsgEl = document.getElementById('status-message');
+const showNewBatchBtn = document.getElementById('show-new-batch-btn');
+const newBatchSection = document.getElementById('new-batch-section');
+const newBatchNameInput = document.getElementById('new-batch-name');
+const createBatchBtn = document.getElementById('create-batch-btn');
+const cancelNewBatchBtn = document.getElementById('cancel-new-batch-btn');
 
-  // 1. Populate the Directory Selector from the global SERP_CONFIG object
-  // (This works because config.js is loaded before this script in popup.html)
-  for (const key in SERP_CONFIG) {
-    const option = document.createElement('option');
-    option.value = key;
-    option.textContent = SERP_CONFIG[key].name;
-    directorySelector.appendChild(option);
-  }
+// --- State ---
+let isLoading = false; // Prevent multiple clicks while processing
+let currentBatches = []; // Cache the list of batches
+let selectedBatchId = null; // ID of the currently selected batch
 
-  // 2. Main UI Update Function
-  function updateUI(prospects = []) {
-    const prospectCount = prospects.length;
-    // Update status bar text
-    statusBar.textContent = `Prospects collected: ${prospectCount}`;
+// --- Utility Functions ---
 
-    // Enable/disable the export button based on whether there's data
-    exportJsonBtn.disabled = prospectCount === 0;
+function setLoading(button, loading) {
+    isLoading = loading;
+    const buttonsToToggle = [saveBtn, exportBtn, deleteBtn, createBatchBtn, showNewBatchBtn];
 
-    // Clear and re-populate the preview table
-    tableBody.innerHTML = ''; // Clear existing rows
-    if (prospectCount === 0) {
-        tableBody.innerHTML = '<tr class="bg-white"><td colspan="3" class="text-center p-4 text-slate-400">No prospects collected yet.</td></tr>';
+    buttonsToToggle.forEach(btn => {
+        if (btn) { // Ensure button exists
+             const originalText = btn.dataset.originalText || btn.textContent;
+             if (loading && !btn.dataset.originalText) {
+                 btn.dataset.originalText = originalText;
+             }
+             if (btn === button) { // Specific button being actioned
+                 btn.textContent = loading ? 'Processing...' : originalText;
+             }
+             btn.disabled = loading; // Disable all during any operation
+             if (!loading) {
+                 delete btn.dataset.originalText; // Clean up data attribute
+             }
+        }
+    });
+
+    // Also disable select dropdown during processing
+    batchSelect.disabled = loading;
+
+    // After loading finishes, re-evaluate button states based on selection
+    if (!loading) {
+        updateButtonStates();
+        updatePageCount(); // Refresh count
+    }
+}
+
+function showStatus(message, isError = false, duration = null) {
+    statusMsgEl.textContent = message;
+    statusMsgEl.className = `text-xs text-center mt-3 h-4 ${isError ? 'text-red-500' : 'text-slate-500'}`;
+    const clearDuration = duration !== null ? duration : (isError ? 5000 : 3000);
+    // Clear the message after duration
+    if (clearDuration > 0) {
+        setTimeout(() => {
+            if (statusMsgEl.textContent === message) { // Only clear if it hasn't been replaced
+                 statusMsgEl.textContent = '';
+                 statusMsgEl.className = 'text-xs text-center text-slate-500 mt-3 h-4';
+            }
+        }, clearDuration);
+    }
+}
+
+function updateButtonStates() {
+    const hasSelection = selectedBatchId !== null;
+    saveBtn.disabled = !hasSelection || isLoading;
+    exportBtn.disabled = !hasSelection || isLoading;
+    deleteBtn.disabled = !hasSelection || isLoading;
+
+     // Ensure export/delete are disabled if the selected batch has 0 pages (checked in updatePageCount)
+     if (hasSelection) {
+         chrome.runtime.sendMessage({ type: 'GET_PAGE_COUNT', payload: { batchId: selectedBatchId } }, (response) => {
+             if (response && response.status === 'success' && !isLoading) { // Don't override loading state
+                 const count = response.count ?? 0;
+                 exportBtn.disabled = (count === 0);
+                 deleteBtn.disabled = (count === 0);
+             } else if (!isLoading) {
+                  exportBtn.disabled = true; // Disable on error too
+                  deleteBtn.disabled = true;
+             }
+         });
+     }
+}
+
+// --- Batch Management UI ---
+
+function populateBatchSelect(selectLast = false) {
+    const previousValue = batchSelect.value; // Store previous selection attempt
+    batchSelect.innerHTML = '<option value="">-- No Batch Selected --</option>'; // Clear existing options
+
+    currentBatches.forEach(batch => {
+        const option = document.createElement('option');
+        option.value = batch.id;
+        option.textContent = batch.name;
+        batchSelect.appendChild(option);
+    });
+
+    // Try to restore previous selection or select the last one if requested (after creation)
+     let valueToSet = "";
+     if (selectLast && currentBatches.length > 0) {
+        valueToSet = currentBatches[currentBatches.length - 1].id.toString();
+     } else if (previousValue) {
+          // Check if previous value still exists
+          if (currentBatches.some(b => b.id.toString() === previousValue)) {
+              valueToSet = previousValue;
+          }
+     }
+
+     batchSelect.value = valueToSet;
+     selectedBatchId = valueToSet ? parseInt(valueToSet, 10) : null;
+     updatePageCount();
+     updateButtonStates();
+}
+
+function loadBatches(selectLast = false) {
+     showStatus("Loading batches...", false, 0); // Show loading indefinitely until done
+     chrome.runtime.sendMessage({ type: 'GET_BATCHES' }, (response) => {
+          if (chrome.runtime.lastError) {
+               console.error("Error loading batches:", chrome.runtime.lastError.message);
+               showStatus(`Error loading batches: ${chrome.runtime.lastError.message}`, true);
+               currentBatches = [];
+          } else if (response && response.status === 'success') {
+               currentBatches = response.batches || [];
+               showStatus("", false, 1); // Clear loading message quickly
+          } else {
+               showStatus(response?.message || "Failed to load batches.", true);
+               currentBatches = [];
+          }
+          populateBatchSelect(selectLast); // Populate dropdown even if loading failed (shows empty state)
+     });
+}
+
+function updatePageCount() {
+    if (selectedBatchId === null) {
+        pageCountEl.textContent = 'N/A';
+        updateButtonStates(); // Ensure export/delete are disabled
+        return;
+    }
+
+    pageCountEl.textContent = 'Loading...';
+    chrome.runtime.sendMessage({ type: 'GET_PAGE_COUNT', payload: { batchId: selectedBatchId } }, (response) => {
+        if (isLoading) return; // Don't update if another operation is in progress
+
+        if (chrome.runtime.lastError) {
+            console.error("Error getting page count:", chrome.runtime.lastError.message);
+            pageCountEl.textContent = 'Error';
+            showStatus(`Error getting count: ${chrome.runtime.lastError.message}`, true);
+        } else if (response && response.status === 'success') {
+            const count = response.count ?? 0;
+            pageCountEl.textContent = count;
+             // Update button states based on count ONLY if not loading
+            exportBtn.disabled = (count === 0);
+            deleteBtn.disabled = (count === 0);
+        } else {
+            pageCountEl.textContent = 'Error';
+            showStatus(response?.message || "Failed to get page count.", true);
+             exportBtn.disabled = true;
+             deleteBtn.disabled = true;
+        }
+    });
+}
+
+
+// --- Event Listeners ---
+
+// Batch Selection Change
+batchSelect.addEventListener('change', (event) => {
+    selectedBatchId = event.target.value ? parseInt(event.target.value, 10) : null;
+    console.log("Selected Batch ID:", selectedBatchId);
+    updatePageCount();
+    updateButtonStates();
+     // Store selection for next time popup opens (optional, using session storage)
+    if (selectedBatchId !== null) {
+         chrome.storage.session.set({ lastSelectedBatchId: selectedBatchId });
     } else {
-        prospects.forEach(prospect => {
-          const row = document.createElement('tr');
-          row.className = 'bg-white border-b hover:bg-slate-50';
-          row.innerHTML = `
-            <td class="px-4 py-2 font-medium text-gray-900 whitespace-nowrap">${prospect.businessName || 'N/A'}</td>
-            <td class="px-4 py-2">${prospect.locationSnippet || 'N/A'}</td>
-            <td class="px-4 py-2">${prospect.rating || 'N/A'}</td>
-          `;
-          tableBody.appendChild(row);
+         chrome.storage.session.remove('lastSelectedBatchId');
+    }
+
+});
+
+// Show/Hide New Batch Form
+showNewBatchBtn.addEventListener('click', () => {
+    newBatchSection.style.display = 'block';
+    showNewBatchBtn.style.display = 'none'; // Hide the plus button
+    newBatchNameInput.focus();
+});
+
+cancelNewBatchBtn.addEventListener('click', () => {
+    newBatchSection.style.display = 'none';
+    showNewBatchBtn.style.display = 'block'; // Show the plus button again
+    newBatchNameInput.value = ''; // Clear input
+    showStatus("", false, 1); // Clear any previous error message
+});
+
+// Create New Batch
+createBatchBtn.addEventListener('click', () => {
+    const name = newBatchNameInput.value.trim();
+    if (!name) {
+        showStatus("Please enter a batch name.", true);
+        newBatchNameInput.focus();
+        return;
+    }
+    if (isLoading) return;
+
+    setLoading(createBatchBtn, true);
+    showStatus(`Creating batch "${name}"...`, false, 0);
+
+    chrome.runtime.sendMessage({ type: 'CREATE_BATCH', payload: { name: name } }, (response) => {
+        setLoading(createBatchBtn, false);
+        if (chrome.runtime.lastError) {
+            console.error("Create batch failed:", chrome.runtime.lastError.message);
+            showStatus(`Create failed: ${chrome.runtime.lastError.message}`, true);
+        } else if (response && response.status === 'success') {
+            showStatus(`Batch "${name}" created.`, false);
+            newBatchNameInput.value = ''; // Clear input
+            newBatchSection.style.display = 'none'; // Hide form
+            showNewBatchBtn.style.display = 'block'; // Show plus button
+            loadBatches(true); // Reload batches and select the newly created one
+        } else {
+            showStatus(response?.message || "Failed to create batch.", true);
+            newBatchNameInput.focus(); // Keep focus if error
+        }
+    });
+});
+
+// Save Page to Selected Batch
+saveBtn.addEventListener('click', () => {
+    if (isLoading || selectedBatchId === null) return;
+    setLoading(saveBtn, true);
+    showStatus(`Saving page to batch "${batchSelect.options[batchSelect.selectedIndex].text}"...`, false, 0);
+
+    chrome.runtime.sendMessage({ type: 'SAVE_CURRENT_PAGE', payload: { batchId: selectedBatchId } }, (response) => {
+        setLoading(saveBtn, false);
+        if (chrome.runtime.lastError) {
+             console.error("Save failed:", chrome.runtime.lastError.message);
+             showStatus(`Save failed: ${chrome.runtime.lastError.message}`, true);
+        } else if (response && response.status === 'success') {
+            showStatus(`Page saved!`, false);
+            // updatePageCount(); // Handled by setLoading(false)
+        } else {
+            showStatus(response?.message || "Failed to save page.", true);
+        }
+    });
+});
+
+// Export Selected Batch
+exportBtn.addEventListener('click', () => {
+    if (isLoading || selectedBatchId === null) return;
+    const selectedBatchName = batchSelect.options[batchSelect.selectedIndex].text;
+    setLoading(exportBtn, true);
+    showStatus(`Exporting batch "${selectedBatchName}"...`, false, 0);
+
+    chrome.runtime.sendMessage({
+        type: 'EXPORT_BATCH_JSONL',
+        payload: { batchId: selectedBatchId, batchName: selectedBatchName }
+     }, (response) => {
+        setLoading(exportBtn, false);
+         if (chrome.runtime.lastError) {
+             console.error("Export failed:", chrome.runtime.lastError.message);
+             showStatus(`Export failed: ${chrome.runtime.lastError.message}`, true);
+         } else if (response && response.status === 'success') {
+             if (response.message) { // Handle "empty batch" message
+                  showStatus(response.message, false);
+             } else {
+                 showStatus("Batch export started (.jsonl).");
+             }
+        } else {
+            showStatus(response?.message || "Failed to start export.", true);
+        }
+    });
+});
+
+// Delete Selected Batch
+deleteBtn.addEventListener('click', () => {
+    if (isLoading || selectedBatchId === null) return;
+    const selectedBatchName = batchSelect.options[batchSelect.selectedIndex].text;
+
+    if (confirm(`Are you sure you want to delete the batch "${selectedBatchName}" and all its pages? This cannot be undone.`)) {
+        setLoading(deleteBtn, true);
+        showStatus(`Deleting batch "${selectedBatchName}"...`, false, 0);
+
+        chrome.runtime.sendMessage({ type: 'DELETE_BATCH', payload: { batchId: selectedBatchId } }, (response) => {
+             setLoading(deleteBtn, false);
+             if (chrome.runtime.lastError) {
+                 console.error("Delete failed:", chrome.runtime.lastError.message);
+                 showStatus(`Delete failed: ${chrome.runtime.lastError.message}`, true);
+             } else if (response && response.status === 'success') {
+                showStatus(`Batch "${selectedBatchName}" deleted.`, false);
+                selectedBatchId = null; // Reset selection
+                 chrome.storage.session.remove('lastSelectedBatchId'); // Clear stored selection
+                loadBatches(); // Reload batches
+                // page count and button states are updated by loadBatches -> populateBatchSelect
+            } else {
+                showStatus(response?.message || "Failed to delete batch.", true);
+            }
         });
     }
-  }
+});
 
-  // 3. Event Listeners for Buttons
-  scrapeBtn.addEventListener('click', () => {
-    const selectedDirectory = directorySelector.value;
-    // Send message to background script to initiate scraping on the active tab
-    chrome.runtime.sendMessage({
-      type: 'SCRAPE_PAGE',
-      payload: { directory: selectedDirectory }
+
+// --- Initial Load ---
+document.addEventListener('DOMContentLoaded', () => {
+    // Attempt to restore last selected batch from session storage
+    chrome.storage.session.get('lastSelectedBatchId', (result) => {
+        const lastId = result.lastSelectedBatchId;
+         if (lastId) {
+             // Temporarily set the value, loadBatches will verify and update properly
+             batchSelect.value = lastId.toString();
+             selectedBatchId = lastId;
+         }
+         loadBatches(); // Load batches from DB, which will re-select if valid
     });
-    // Provide user feedback
-    scrapeBtn.disabled = true;
-    scrapeBtn.textContent = 'Scraping...';
-    setTimeout(() => { 
-        scrapeBtn.disabled = false;
-        scrapeBtn.textContent = 'Scrape This Page'; 
-    }, 1500); // Re-enable button after 1.5 seconds
-  });
-
-  clearBtn.addEventListener('click', () => {
-    if (confirm('Are you sure you want to clear the entire prospect list?')) {
-      chrome.storage.local.set({ prospects: [] }, () => {
-        console.log('Prospect list has been cleared.');
-        updateUI([]); // Immediately update UI
-      });
-    }
-  });
-
-  exportJsonBtn.addEventListener('click', () => {
-    chrome.storage.local.get('prospects', (data) => {
-      if (!data.prospects || data.prospects.length === 0) return;
-      
-      const jsonContent = JSON.stringify(data.prospects, null, 2);
-      const blob = new Blob([jsonContent], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      
-      chrome.downloads.download({
-        url: url,
-        filename: 'siteperf_prospects_export.json',
-        saveAs: true
-      });
-    });
-  });
-
-  // 4. Listen for storage changes to keep the UI automatically in sync
-  chrome.storage.onChanged.addListener((changes, namespace) => {
-    if (namespace === 'local' && changes.prospects) {
-      updateUI(changes.prospects.newValue || []);
-    }
-  });
-
-  // 5. Initial UI load when popup is opened
-  chrome.storage.local.get('prospects', (data) => {
-    updateUI(data.prospects || []);
-  });
+     updateButtonStates(); // Set initial button disabled states
+     updatePageCount();
 });
 
