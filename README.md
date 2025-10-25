@@ -51,13 +51,13 @@ This Chrome extension, **Webgrab**, allows users to save the complete HTML sourc
 
 ## 4. Processing Exported Data (JSON Lines to SQLite)
 
-See [`jsonl-to-sqlite.py`](/jsonl-to-sqlite.py) for script.
+See [script in gist](https://gist.github.com/thedatadavis/38331377b1910c85435d922d3dcbde74).
 
 **How to use the Python script:**
 
-1.  Save the Python code (from the previous response) as `python_importer.py`.
+1.  Save the Python code as `jsonl_converter.py`.
 2.  Run it from your terminal, replacing the filenames:
-    `python python_importer.py batch_YP_Detroit_Attorneys_1_export.jsonl my_archive.sqlite`
+    `python jsonl_converter.py batch_YP_Detroit_Attorneys_1_export.jsonl my_archive.sqlite`
 
 ***
 
