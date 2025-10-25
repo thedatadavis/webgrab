@@ -1,62 +1,69 @@
-# **SitePerf.pro Bulk Scraper Extension**
+Of course. Here is the README file written in Markdown format.
 
-**Version: 1.1**
+# Webgrab Extension (IndexedDB with Batches)
 
-## **1\. Vision & Goal**
+**Version: 1.2**
 
-The SitePerf.pro Bulk Scraper Extension is an internal tool designed to accelerate the creation of initial prospect lists by scraping directory search result pages (SERPs) in bulk. The goal is to enable a SitePerf.pro admin to quickly build a large JSON file of potential prospects from a directory search.
+***
 
-## **2\. Core User Flow**
+## 1. Goal
 
-The user wants to build a list of all Personal Injury lawyers in Chicago from Avvo.
+This Chrome extension, **Webgrab**, allows users to save the complete HTML source code of web pages they visit into organized **batches**. Each batch typically corresponds to a specific search or task (e.g., "Avvo Detroit PI Lawyers", "YellowPages Chicago Plumbers"). It uses the browser's IndexedDB for efficient storage and allows exporting individual batches as JSON Lines (`.jsonl`) files.
 
-1. **Initiation**: The admin navigates to the first page of search results on Avvo.  
-2. **Configuration**: They open the extension popup and select "Avvo" from the directory dropdown.  
-3. **Scrape & Append Loop**:  
-   * The admin clicks the "Scrape This Page" button.  
-   * The extension extracts data from all listings and adds them to the list shown in the popup.  
-   * The admin manually clicks to the next page of search results on the website.  
-   * The admin clicks "Scrape This Page" again. The new results are added to the list, and duplicates are ignored.  
-   * This "navigate, click scrape" loop is repeated for as many pages as needed.  
-4. **Export**: Once finished, the admin clicks "Export as JSON" to download a single file containing all the aggregated data. The "Clear List" button resets the session.
+***
 
-## **3\. How to Install and Use**
+## 2. How it Works
 
-1. **Save the Files**: Save all the provided files (manifest.json, config.js, background.js, content.js, popup.html, popup.js, README.md) into a single folder on your computer.  
-2. **Create icons Folder**: Inside that main folder, create a new sub-folder named icons.  
-3. **Add Icons**: Create or find three PNG images and save them inside the icons folder with the exact names: icon16.png, icon48.png, and icon128.png.  
-4. **Open Chrome Extensions**: Open Google Chrome and navigate to chrome://extensions.  
-5. **Enable Developer Mode**: In the top-right corner, toggle on "Developer mode".  
-6. **Load Unpacked**: Click the "Load unpacked" button that appears on the top-left.  
-7. **Select Folder**: In the file dialog, select the main folder where you saved all the extension files and click "Select Folder".  
-8. **Ready to Use**: The "SitePerf.pro Bulk Scraper" extension will now appear in your browser's toolbar. Pin it for easy access.
+* **IndexedDB Storage:** Uses two stores:
+    * `batches`: Stores metadata for each batch (ID, name, creation date, page count, etc.).
+    * `pages`: Stores the actual page HTML content, linked to a batch via `batchId`. The page URL is the unique key.
+* **Batch Management:**
+    * Users can create new batches with unique names via the popup.
+    * A dropdown allows selecting the currently active batch.
+* **Saving:** Clicking "Save Current Page" saves the current tab's HTML and metadata to the *selected batch* in IndexedDB. If the page URL already exists in the `pages` store, its HTML content and timestamp are updated, but the batch's page count *is not* incremented again.
+* **Exporting:** Clicking "Export Selected Batch" reads all pages linked to the *currently selected batch* from IndexedDB and generates a downloadable `.jsonl` file (e.g., `batch_Avvo_Detroit_PI_Lawyers_1_export.jsonl`). Each line is a JSON object representing one page.
+* **Deleting:** Clicking "Delete Selected Batch" removes the batch record *and* all associated page records from IndexedDB after confirmation.
 
-## **4\. How to Extend (Add a New Directory)**
+***
 
-The extension is designed to be easily configurable. To add support for a new site (e.g., YellowPages):
+## 3. How to Install and Use
 
-1. **Update config.js**: Open the config.js file. Add a new entry to the SERP\_CONFIG object. You will need to inspect the new website's HTML to find the correct CSS selectors.  
-   "YellowPages": {  
-     "name": "YellowPages",  
-     "listingContainer": ".result-item", // Find the main container for each business  
-     "fields": {  
-       "businessName": { "selector": ".business-name" },  
-       "directoryProfileUrl": { "selector": "a.business-name", "attribute": "href", "prefix": "\[https://www.yellowpages.com\](https://www.yellowpages.com)" },  
-       // ... add other field selectors  
-     }  
-   }
+1.  **Save the Files**: Save all provided files (`manifest.json`, `background.js`, `popup.html`, `popup.js`, `README.md`) into a single folder.
+2.  **Create `icons` Folder**: Inside the main folder, create `icons/`.
+3.  **Add Icons**: Add `icon16.png`, `icon48.png`, `icon128.png` to the `icons/` folder.
+4.  **Open Chrome Extensions**: Navigate to `chrome://extensions`.
+5.  **Enable Developer Mode**: Toggle on "Developer mode" (usually top-right).
+6.  **Load Unpacked**: Click "Load unpacked" (usually top-left).
+7.  **Select Folder**: Select the main folder containing all the extension files.
+8.  **Ready to Use**: The **Webgrab** extension icon will appear. Pin it for easy access.
+9.  **Usage:**
+    * Click the extension icon.
+    * If no batches exist, you'll be prompted implicitly. Click the "+" button, enter a name (e.g., "YP Detroit Attorneys"), and click "Create Batch".
+    * Select the desired batch from the dropdown.
+    * Navigate to a web page you want to archive.
+    * Open the popup again (the batch should still be selected).
+    * Click "Save Current Page to Batch". The page count for that batch will update.
+    * Repeat saving pages to the selected batch as needed.
+    * To export, ensure the correct batch is selected and click "Export Selected Batch (.jsonl)".
+    * To delete, ensure the correct batch is selected, click "Delete Selected Batch", and confirm.
 
-2. **Update manifest.json**: Add the new website's URL pattern to the host\_permissions and content\_scripts.matches arrays.  
-   "host\_permissions": \[  
-     "\*://\*\[.avvo.com/\](https://.avvo.com/)\*",  
-     "\*://\*\[.findlaw.com/\](https://.findlaw.com/)\*",  
-     "\*://\*\[.yellowpages.com/\](https://.yellowpages.com/)\*"  
-   \],  
-   "content\_scripts": \[  
-     {  
-       "matches": \["\*://\*\[.avvo.com/\](https://.avvo.com/)\*", "\*://\*\[.findlaw.com/\](https://.findlaw.com/)\*", "\*://\*\[.yellowpages.com/\](https://.yellowpages.com/)\*"\],  
-       "js": \["config.js", "content.js"\]  
-     }  
-   \]
+***
 
-3. **Reload the Extension**: Go back to chrome://extensions and click the reload button on the SitePerf.pro extension card. Your changes are now live, and the "YellowPages" option will appear in the dropdown.
+## 4. Processing Exported Data (JSON Lines to SQLite)
+
+See [`jsonl-to-sqlite.py`](/jsonl-to-sqlite.py) for script.
+
+**How to use the Python script:**
+
+1.  Save the Python code (from the previous response) as `python_importer.py`.
+2.  Run it from your terminal, replacing the filenames:
+    `python python_importer.py batch_YP_Detroit_Attorneys_1_export.jsonl my_archive.sqlite`
+
+***
+
+## 5. Technical Notes
+
+* **Storage:** IndexedDB provides ample storage for many batches and pages.
+* **Performance:** Saving individual pages is efficient. Exporting or deleting very large batches (thousands of pages) might take noticeable time; the UI provides basic feedback.
+* **Batch Naming:** Batch names must be unique. The extension prevents creating duplicate names.
+* **Error Handling:** Basic error handling is included. If major IndexedDB issues occur, clearing the extension's storage via Chrome's developer tools might be necessary (`Application` -> `Storage` -> `IndexedDB`).
