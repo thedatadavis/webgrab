@@ -194,10 +194,48 @@ exportDataBtn.addEventListener('click', () => {
     showStatus('Exporting data...', false, true);
     exportDataBtn.disabled = true; // Disable during export
 
-    chrome.runtime.sendMessage({ action: 'exportBatch', batchId: selectedBatchId, batchName: selectedBatch.name }, (response) => {
+    chrome.runtime.sendMessage({ 
+        action: 'exportBatch', 
+        batchId: selectedBatchId, 
+        batchName: selectedBatch.name 
+    }, (response) => {
         exportDataBtn.disabled = false; // Re-enable
-        if (response.success) {
-            showStatus(`Batch "${selectedBatch.name}" exported successfully.`, false);
+        
+        if (response.success && response.pages) {
+            try {
+                // Format as JSON Lines
+                const jsonlData = response.pages.map(page => JSON.stringify(page)).join('\n');
+                
+                // Create blob and download in popup context (has access to Blob/URL APIs)
+                const blob = new Blob([jsonlData], { type: 'application/jsonl' });
+                const blobUrl = URL.createObjectURL(blob);
+                
+                // Generate filename
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                const safeBatchName = response.batchName.replace(/[^a-z0-9_-]/gi, '_').substring(0, 50);
+                const filename = `webgrab_batch_${safeBatchName}_${response.batchId.substring(0, 8)}_${timestamp}.jsonl`;
+                
+                // Create invisible download link
+                const downloadLink = document.createElement('a');
+                downloadLink.href = blobUrl;
+                downloadLink.download = filename;
+                downloadLink.style.display = 'none';
+                document.body.appendChild(downloadLink);
+                
+                // Trigger download
+                downloadLink.click();
+                
+                // Cleanup
+                setTimeout(() => {
+                    document.body.removeChild(downloadLink);
+                    URL.revokeObjectURL(blobUrl);
+                }, 100);
+                
+                showStatus(`Batch "${selectedBatch.name}" exported successfully.`, false);
+            } catch (error) {
+                console.error('Export error:', error);
+                showStatus(`Export failed: ${error.message}`, true);
+            }
         } else {
             showStatus(response.error || 'Failed to export data.', true);
         }
@@ -261,11 +299,13 @@ function showStatus(message, isError = false, isLoading = false) {
     }
 }
 
+// Clean up timeout when popup closes
+window.addEventListener('unload', () => {
+    clearTimeout(statusTimeout);
+});
+
+
 // --- Initial Load ---
 document.addEventListener('DOMContentLoaded', () => {
     loadBatches(); // Load batches when popup opens
-});
-
-window.addEventListener('unload', () => {
-    clearTimeout(statusTimeout);
 });
