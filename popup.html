@@ -1,64 +1,67 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>SP.pro Bulk Scraper</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    body { width: 450px; font-family: 'Inter', sans-serif; }
-    /* Simple custom scrollbar for the table */
-    .table-container::-webkit-scrollbar { width: 8px; }
-    .table-container::-webkit-scrollbar-track { background: #f1f5f9; }
-    .table-container::-webkit-scrollbar-thumb { background-color: #94a3b8; border-radius: 10px; border: 2px solid #f1f5f9; }
-    .table-container { max-height: 200px; overflow-y: auto; }
-  </style>
+    <meta charset="UTF-8">
+    <title>Webgrab Extension</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { width: 350px; font-family: 'Inter', sans-serif; }
+        button:disabled { cursor: not-allowed; opacity: 0.6; }
+        select:disabled { cursor: not-allowed; background-color: #f3f4f6; }
+        #new-batch-section { display: none; }
+    </style>
 </head>
 <body class="bg-slate-100 p-4">
 
-  <h1 class="text-xl font-bold text-slate-800 mb-3">SitePerf.pro Bulk Scraper</h1>
+    <h1 class="text-lg font-bold text-slate-800 mb-4 text-center">Webgrab</h1>
 
-  <!-- Main Controls -->
-  <div class="grid grid-cols-2 gap-3 mb-3">
-    <div>
-      <label for="directory-selector" class="block text-sm font-medium text-slate-700">Directory</label>
-      <select id="directory-selector" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"></select>
+    <div class="mb-3">
+        <label for="batch-select" class="block text-sm font-medium text-slate-700 mb-1">Current Batch:</label>
+        <div class="flex items-center gap-2">
+            <select id="batch-select" name="batch-select" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md appearance-none">
+                <option value="">-- No Batch Selected --</option>
+
+            </select>
+            <button id="show-new-batch-btn" title="Create New Batch" class="mt-1 p-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                </svg>
+            </button>
+        </div>
     </div>
-    <button id="scrape-btn" class="self-end w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg shadow-sm hover:bg-blue-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50">
-      Scrape This Page
-    </button>
-  </div>
 
-  <!-- Status Bar and Export/Clear Buttons -->
-  <div class="bg-white p-3 rounded-lg shadow-md mb-3">
-    <div class="flex justify-between items-center text-sm">
-      <span id="status-bar" class="font-medium text-slate-700">Prospects collected: 0</span>
-      <div class="flex gap-2">
-        <button id="export-json-btn" class="text-xs bg-gray-200 hover:bg-gray-300 text-slate-800 font-semibold py-1 px-3 rounded-md disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed">Export JSON</button>
-        <button id="clear-btn" class="text-xs bg-red-500 hover:bg-red-600 text-white font-semibold py-1 px-3 rounded-md">Clear List</button>
-      </div>
+    <div id="new-batch-section" class="mb-4 p-3 bg-white rounded-lg shadow-sm border border-slate-200">
+        <label for="new-batch-name" class="block text-sm font-medium text-slate-700 mb-1">New Batch Name:</label>
+        <input type="text" id="new-batch-name" placeholder="e.g., Avvo Detroit PI Lawyers" class="block w-full mb-2 p-2 border border-gray-300 rounded-md sm:text-sm focus:ring-blue-500 focus:border-blue-500">
+        <div class="flex justify-end gap-2">
+             <button id="cancel-new-batch-btn" class="text-sm bg-gray-200 hover:bg-gray-300 text-slate-800 font-semibold py-1 px-3 rounded-md">Cancel</button>
+             <button id="create-batch-btn" class="text-sm bg-green-600 hover:bg-green-700 text-white font-semibold py-1 px-3 rounded-md">Create Batch</button>
+        </div>
     </div>
-  </div>
 
-  <!-- Data Preview Table -->
-  <div class="bg-white rounded-lg shadow-md table-container">
-    <table class="w-full text-sm text-left text-slate-600">
-      <thead class="text-xs text-slate-700 uppercase bg-slate-50 sticky top-0">
-        <tr>
-          <th scope="col" class="px-4 py-2">Business Name</th>
-          <th scope="col" class="px-4 py-2">Location</th>
-          <th scope="col" class="px-4 py-2">Rating</th>
-        </tr>
-      </thead>
-      <tbody id="preview-table-body">
-        <!-- Rows will be inserted here by popup.js -->
-        <tr class="bg-white"><td colspan="3" class="text-center p-4 text-slate-400">No prospects collected yet.</td></tr>
-      </tbody>
-    </table>
-  </div>
-  
-  <!-- Scripts are loaded at the end of the body -->
-  <script src="config.js"></script>
-  <script src="popup.js"></script>
+
+    <div class="bg-white p-3 rounded-lg shadow-md mb-3 text-center">
+        <p class="text-sm text-slate-600">Pages saved in selected batch:</p>
+        <p id="page-count" class="text-2xl font-semibold text-slate-800">N/A</p>
+    </div>
+
+    <div class="flex flex-col gap-2">
+        <button id="save-page-btn" class="w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg shadow-sm hover:bg-blue-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50" disabled>
+            Save Current Page to Batch
+        </button>
+
+        <button id="export-data-btn" class="w-full bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-sm hover:bg-green-700 transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50" disabled>
+            Export Selected Batch (.jsonl)
+        </button>
+
+        <button id="delete-batch-btn" class="w-full bg-red-600 text-white font-semibold py-2 px-4 rounded-lg shadow-sm hover:bg-red-700 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50" disabled>
+            Delete Selected Batch
+        </button>
+    </div>
+
+     <p id="status-message" class="text-xs text-center text-slate-500 mt-3 h-4"></p>
+
+    <script src="popup.js"></script>
 </body>
 </html>
 
