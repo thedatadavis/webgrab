@@ -417,44 +417,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         return;
                     }
 
-                    // Format as JSON Lines
-                    const jsonlData = pages.map(page => JSON.stringify(page)).join('\n');
-                    const blob = new Blob([jsonlData], { type: 'application/jsonl' });
-                    const blobUrl = URL.createObjectURL(blob);
-
-                    // Generate filename
-                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-                    const safeBatchName = request.batchName.replace(/[^a-z0-9_-]/gi, '_').substring(0, 50);
-                    const filename = `webgrab_batch_${safeBatchName}_${request.batchId.substring(0, 8)}_${timestamp}.jsonl`;
-
-                    // Use downloads API with better error handling
-                    try {
-                        await new Promise((resolve, reject) => {
-                            chrome.downloads.download({
-                                url: blobUrl,
-                                filename: filename,
-                                saveAs: true
-                            }, (downloadId) => {
-                                if (chrome.runtime.lastError) {
-                                    console.error("Download failed:", chrome.runtime.lastError);
-                                    reject(chrome.runtime.lastError);
-                                } else {
-                                    console.log("Download initiated with ID:", downloadId);
-                                    resolve(downloadId);
-                                }
-                            });
-                        });
-                        
-                        // Clean up blob URL after brief delay
-                        setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
-                        sendResponse({ success: true });
-                    } catch (downloadError) {
-                        URL.revokeObjectURL(blobUrl);
-                        sendResponse({ 
-                            success: false, 
-                            error: `Download failed: ${downloadError.message}` 
-                        });
-                    }
+                    // Return the pages to the popup for download handling
+                    sendResponse({ 
+                        success: true, 
+                        pages: pages,
+                        batchName: request.batchName,
+                        batchId: request.batchId
+                    });
                     break;
                 }
                 
