@@ -3,17 +3,13 @@ const DB_VERSION = 1;
 const BATCHES_STORE_NAME = 'batches';
 const PAGES_STORE_NAME = 'pages';
 
-let db = null;
+// Don't rely on global db variable - always open fresh
+// Service workers can terminate and lose global state
 
 // --- IndexedDB Initialization ---
 
 function openDb() {
     return new Promise((resolve, reject) => {
-        if (db) {
-            resolve(db);
-            return;
-        }
-
         const request = indexedDB.open(DB_NAME, DB_VERSION);
 
         request.onerror = (event) => {
@@ -22,28 +18,28 @@ function openDb() {
         };
 
         request.onsuccess = (event) => {
-            db = event.target.result;
+            const db = event.target.result;
             console.log("Database opened successfully.");
             resolve(db);
         };
 
         request.onupgradeneeded = (event) => {
             console.log("Database upgrade needed.");
-            let tempDb = event.target.result;
+            const db = event.target.result;
+            
             // Create batches store (id = uuid, name)
-            if (!tempDb.objectStoreNames.contains(BATCHES_STORE_NAME)) {
-                tempDb.createObjectStore(BATCHES_STORE_NAME, { keyPath: 'id' });
-                 console.log(`Object store "${BATCHES_STORE_NAME}" created.`);
+            if (!db.objectStoreNames.contains(BATCHES_STORE_NAME)) {
+                db.createObjectStore(BATCHES_STORE_NAME, { keyPath: 'id' });
+                console.log(`Object store "${BATCHES_STORE_NAME}" created.`);
             }
+            
             // Create pages store (url = key, batchId, site, params, html_content, retrieved_at)
-            if (!tempDb.objectStoreNames.contains(PAGES_STORE_NAME)) {
-               const pageStore = tempDb.createObjectStore(PAGES_STORE_NAME, { keyPath: 'url' });
+            if (!db.objectStoreNames.contains(PAGES_STORE_NAME)) {
+                const pageStore = db.createObjectStore(PAGES_STORE_NAME, { keyPath: 'url' });
                 // Add index for batchId for efficient batch-based retrieval/deletion
                 pageStore.createIndex('batchIdIndex', 'batchId', { unique: false });
                 console.log(`Object store "${PAGES_STORE_NAME}" created with index on batchId.`);
             }
-             // Assign the upgraded db instance so the onsuccess handler gets it
-             db = tempDb;
         };
     });
 }
@@ -54,16 +50,16 @@ async function createBatchInDb(name) {
     if (!name) return { success: false, error: 'Batch name cannot be empty.' };
 
     try {
-        const dbInstance = await openDb();
+        const db = await openDb();
         
-        // Check if name already exists - moved BEFORE transaction
-        const existingBatches = await getAllBatchesFromDb(dbInstance);
+        // Check if name already exists BEFORE starting transaction
+        const existingBatches = await getAllBatchesFromDb();
         if (existingBatches.some(batch => batch.name.toLowerCase() === name.toLowerCase())) {
+            db.close();
             return { success: false, error: 'Batch name already exists.' };
         }
 
-        // Now create the transaction
-        const transaction = dbInstance.transaction(BATCHES_STORE_NAME, 'readwrite');
+        const transaction = db.transaction(BATCHES_STORE_NAME, 'readwrite');
         const store = transaction.objectStore(BATCHES_STORE_NAME);
 
         const newBatch = {
@@ -84,7 +80,16 @@ async function createBatchInDb(name) {
             
             request.onerror = (event) => {
                 console.error("Error adding batch:", event.target.error);
-                reject({ success: false, error: event.target.error });
+                reject({ success: false, error: event.target.error?.message || 'Failed to add batch' });
+            };
+
+            transaction.oncomplete = () => {
+                db.close();
+            };
+
+            transaction.onerror = (event) => {
+                console.error("Transaction error:", event.target.error);
+                db.close();
             };
         });
     } catch (error) {
@@ -93,12 +98,10 @@ async function createBatchInDb(name) {
     }
 }
 
-
-async function getAllBatchesFromDb(dbInstance = null) {
-     // Allows passing an existing DB instance to avoid reopening
+async function getAllBatchesFromDb() {
     try {
-        const currentDb = dbInstance || await openDb();
-        const transaction = currentDb.transaction(BATCHES_STORE_NAME, 'readonly');
+        const db = await openDb();
+        const transaction = db.transaction(BATCHES_STORE_NAME, 'readonly');
         const store = transaction.objectStore(BATCHES_STORE_NAME);
         const request = store.getAll();
 
@@ -110,37 +113,33 @@ async function getAllBatchesFromDb(dbInstance = null) {
                 );
                 resolve(sortedBatches);
             };
+            
             request.onerror = (event) => {
-                 console.error("Error getting all batches:", event.target.error);
+                console.error("Error getting all batches:", event.target.error);
                 reject(event.target.error);
+            };
+
+            transaction.oncomplete = () => {
+                db.close();
+            };
+
+            transaction.onerror = (event) => {
+                console.error("Transaction error:", event.target.error);
+                db.close();
             };
         });
     } catch (error) {
         console.error("Failed to get batches:", error);
-        return []; // Return empty array on failure
+        return [];
     }
 }
 
-
 async function addPageToDb(pageData) {
     try {
-        const dbInstance = await openDb();
-        // Check if page already exists before updating batch count
-        let pageExists = false;
-        const getTransaction = dbInstance.transaction(PAGES_STORE_NAME, 'readonly');
-        const pageStoreGet = getTransaction.objectStore(PAGES_STORE_NAME);
-        const getRequest = pageStoreGet.getKey(pageData.url); // More efficient check
-
-        pageExists = await new Promise((resolve, reject) => {
-            getRequest.onsuccess = () => resolve(!!getRequest.result); // Resolve true if key exists
-            getRequest.onerror = (e) => reject(e.target.error);
-        });
-
-         console.log(`Page ${pageData.url} exists? ${pageExists}`);
-
-
-        // Use a single transaction for page add/update and batch update
-        const transaction = dbInstance.transaction([PAGES_STORE_NAME, BATCHES_STORE_NAME], 'readwrite');
+        const db = await openDb();
+        
+        // Single transaction for atomicity - check existence within the transaction
+        const transaction = db.transaction([PAGES_STORE_NAME, BATCHES_STORE_NAME], 'readwrite');
         const pageStore = transaction.objectStore(PAGES_STORE_NAME);
         const batchStore = transaction.objectStore(BATCHES_STORE_NAME);
 
@@ -154,60 +153,79 @@ async function addPageToDb(pageData) {
             retrieved_at: pageData.retrieved_at,
         };
 
-        const pageRequest = pageStore.put(pageRecord); // Use put to add or update
-
-        // Only update batch count if the page didn't exist before this operation
-        let batchUpdateRequest = null;
-        if (!pageExists) {
-            const batchRequest = batchStore.get(pageData.batchId);
-            batchRequest.onsuccess = () => {
-                const batch = batchRequest.result;
-                if (batch) {
-                    batch.pageCount = (batch.pageCount || 0) + 1;
-                    batch.lastSavedAt = pageData.retrieved_at; // Update last saved time
-                    batchUpdateRequest = batchStore.put(batch); // Put the updated batch back
-                     console.log(`Incrementing page count for batch ${pageData.batchId}`);
-                } else {
-                    console.warn(`Batch ${pageData.batchId} not found during page save count update.`);
-                }
-            };
-             batchRequest.onerror = (e) => console.error("Error getting batch for count update:", e.target.error);
-        } else {
-             // If page exists, still update the lastSavedAt timestamp for the target batch
-              const batchRequest = batchStore.get(pageData.batchId);
-              batchRequest.onsuccess = () => {
-                  const batch = batchRequest.result;
-                  if (batch) {
-                      batch.lastSavedAt = pageData.retrieved_at; // Update last saved time
-                      batchUpdateRequest = batchStore.put(batch);
-                       console.log(`Updating lastSavedAt for batch ${pageData.batchId} due to page update.`);
-                  } else {
-                       console.warn(`Batch ${pageData.batchId} not found during page update lastSavedAt.`);
-                  }
-              };
-               batchRequest.onerror = (e) => console.error("Error getting batch for lastSavedAt update:", e.target.error);
-        }
-
+        let shouldIncrementCount = false;
+        let operationComplete = false;
 
         return new Promise((resolve, reject) => {
-            // Wait for all operations in the transaction to complete
-            transaction.oncomplete = () => {
-                console.log("Page added/updated and batch meta potentially updated successfully.");
-                resolve({ success: true });
-            };
-            transaction.onerror = (event) => {
-                console.error("Transaction error adding page/updating batch:", event.target.error);
-                 // Check specific request errors if needed
-                 if (pageRequest.error) console.error(" - Page put error:", pageRequest.error);
-                 if (batchUpdateRequest && batchUpdateRequest.error) console.error(" - Batch update error:", batchUpdateRequest.error);
-                reject({ success: false, error: event.target.error });
-            };
-            // Ensure individual request errors are also caught (though transaction.onerror should handle it)
-            pageRequest.onerror = (event) => {
-                console.error("Error putting page:", event.target.error);
-                // Don't reject here, let the transaction handle it
+            // First check if page exists
+            const getRequest = pageStore.getKey(pageData.url);
+            
+            getRequest.onsuccess = () => {
+                const pageExists = !!getRequest.result;
+                shouldIncrementCount = !pageExists;
+                console.log(`Page ${pageData.url} exists? ${pageExists}`);
+
+                // Now put the page (add or update)
+                const putRequest = pageStore.put(pageRecord);
+                
+                putRequest.onsuccess = () => {
+                    // Update batch metadata
+                    const batchRequest = batchStore.get(pageData.batchId);
+                    
+                    batchRequest.onsuccess = () => {
+                        const batch = batchRequest.result;
+                        if (batch) {
+                            if (shouldIncrementCount) {
+                                batch.pageCount = (batch.pageCount || 0) + 1;
+                                console.log(`Incrementing page count for batch ${pageData.batchId}`);
+                            }
+                            batch.lastSavedAt = pageData.retrieved_at;
+                            batchStore.put(batch);
+                        } else {
+                            console.warn(`Batch ${pageData.batchId} not found during page save.`);
+                        }
+                    };
+
+                    batchRequest.onerror = (e) => {
+                        console.error("Error getting batch for update:", e.target.error);
+                    };
+                };
+
+                putRequest.onerror = (e) => {
+                    console.error("Error putting page:", e.target.error);
+                };
             };
 
+            getRequest.onerror = (e) => {
+                console.error("Error checking page existence:", e.target.error);
+            };
+
+            transaction.oncomplete = () => {
+                if (!operationComplete) {
+                    operationComplete = true;
+                    console.log("Page operation completed successfully.");
+                    db.close();
+                    resolve({ success: true });
+                }
+            };
+
+            transaction.onerror = (event) => {
+                if (!operationComplete) {
+                    operationComplete = true;
+                    console.error("Transaction error:", event.target.error);
+                    db.close();
+                    reject({ success: false, error: event.target.error?.message || 'Transaction failed' });
+                }
+            };
+
+            transaction.onabort = (event) => {
+                if (!operationComplete) {
+                    operationComplete = true;
+                    console.error("Transaction aborted:", event.target.error);
+                    db.close();
+                    reject({ success: false, error: 'Transaction aborted' });
+                }
+            };
         });
     } catch (error) {
         console.error("Failed to add page:", error);
@@ -215,22 +233,31 @@ async function addPageToDb(pageData) {
     }
 }
 
-
 async function getPagesForBatch(batchId) {
     try {
-        const dbInstance = await openDb();
-        const transaction = dbInstance.transaction(PAGES_STORE_NAME, 'readonly');
+        const db = await openDb();
+        const transaction = db.transaction(PAGES_STORE_NAME, 'readonly');
         const store = transaction.objectStore(PAGES_STORE_NAME);
         const index = store.index('batchIdIndex');
-        const request = index.getAll(IDBKeyRange.only(batchId)); // Use index
+        const request = index.getAll(IDBKeyRange.only(batchId));
 
         return new Promise((resolve, reject) => {
             request.onsuccess = () => {
                 resolve(request.result);
             };
+            
             request.onerror = (event) => {
                 console.error(`Error getting pages for batch ${batchId}:`, event.target.error);
                 reject(event.target.error);
+            };
+
+            transaction.oncomplete = () => {
+                db.close();
+            };
+
+            transaction.onerror = (event) => {
+                console.error("Transaction error:", event.target.error);
+                db.close();
             };
         });
     } catch (error) {
@@ -241,55 +268,71 @@ async function getPagesForBatch(batchId) {
 
 async function deleteBatchAndPages(batchId) {
     try {
-        const dbInstance = await openDb();
-        const transaction = dbInstance.transaction([BATCHES_STORE_NAME, PAGES_STORE_NAME], 'readwrite');
+        const db = await openDb();
+        const transaction = db.transaction([BATCHES_STORE_NAME, PAGES_STORE_NAME], 'readwrite');
         const batchStore = transaction.objectStore(BATCHES_STORE_NAME);
         const pageStore = transaction.objectStore(PAGES_STORE_NAME);
         const pageIndex = pageStore.index('batchIdIndex');
 
-        // 1. Delete the batch record
-        const batchDeleteRequest = batchStore.delete(batchId);
-
-        // 2. Find and delete all associated pages using the index
-        const pageCursorRequest = pageIndex.openCursor(IDBKeyRange.only(batchId));
         let pagesDeletedCount = 0;
-
-        pageCursorRequest.onsuccess = (event) => {
-            const cursor = event.target.result;
-            if (cursor) {
-                pageStore.delete(cursor.primaryKey); // Delete page by its primary key (url)
-                pagesDeletedCount++;
-                cursor.continue();
-            }
-            // No more pages, deletion process for pages is done within this cursor loop
-        };
-
+        let operationComplete = false;
 
         return new Promise((resolve, reject) => {
-             // Report success/failure when the *entire transaction* completes or aborts
+            // Delete the batch record
+            const batchDeleteRequest = batchStore.delete(batchId);
+            
+            batchDeleteRequest.onerror = (e) => {
+                console.error("Batch delete request failed:", e.target.error);
+            };
+
+            // Find and delete all associated pages using cursor
+            const pageCursorRequest = pageIndex.openCursor(IDBKeyRange.only(batchId));
+            
+            pageCursorRequest.onsuccess = (event) => {
+                const cursor = event.target.result;
+                if (cursor) {
+                    pageStore.delete(cursor.primaryKey);
+                    pagesDeletedCount++;
+                    cursor.continue();
+                }
+            };
+
+            pageCursorRequest.onerror = (e) => {
+                console.error("Page cursor request failed:", e.target.error);
+            };
+
             transaction.oncomplete = () => {
-                 console.log(`Batch ${batchId} and ${pagesDeletedCount} pages deleted successfully.`);
-                resolve({ success: true, pagesDeletedCount: pagesDeletedCount });
+                if (!operationComplete) {
+                    operationComplete = true;
+                    console.log(`Batch ${batchId} and ${pagesDeletedCount} pages deleted successfully.`);
+                    db.close();
+                    resolve({ success: true, pagesDeletedCount: pagesDeletedCount });
+                }
             };
+
             transaction.onerror = (event) => {
-                 console.error(`Transaction error deleting batch ${batchId}:`, event.target.error);
-                 // Log specific request errors if available
-                if(batchDeleteRequest.error) console.error(" - Batch delete error:", batchDeleteRequest.error);
-                if(pageCursorRequest.error) console.error(" - Page cursor/delete error:", pageCursorRequest.error);
-                reject({ success: false, error: event.target.error });
+                if (!operationComplete) {
+                    operationComplete = true;
+                    console.error(`Transaction error deleting batch ${batchId}:`, event.target.error);
+                    db.close();
+                    reject({ success: false, error: event.target.error?.message || 'Delete failed' });
+                }
             };
-             // Individual request error logging (less critical as transaction should catch it)
-             batchDeleteRequest.onerror = e => console.error("Batch delete request failed:", e.target.error);
-             pageCursorRequest.onerror = e => console.error("Page cursor request failed:", e.target.error);
 
+            transaction.onabort = (event) => {
+                if (!operationComplete) {
+                    operationComplete = true;
+                    console.error(`Transaction aborted:`, event.target.error);
+                    db.close();
+                    reject({ success: false, error: 'Transaction aborted' });
+                }
+            };
         });
-
     } catch (error) {
         console.error("Failed to delete batch and pages:", error);
         return { success: false, error: error.message || error };
     }
 }
-
 
 // --- Message Handling ---
 
@@ -299,19 +342,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Use async IIFE to handle promises with sendResponse
     (async () => {
         try {
-            await openDb(); // Ensure DB is open before handling messages
+            if (!request.action) {
+                sendResponse({ success: false, error: 'No action specified' });
+                return;
+            }
 
             switch (request.action) {
-                 case 'createBatch': {
+                case 'createBatch': {
                     const result = await createBatchInDb(request.name);
                     sendResponse(result);
                     break;
-                 }
+                }
+                
                 case 'getBatches': {
                     const batches = await getAllBatchesFromDb();
                     sendResponse({ success: true, batches: batches });
                     break;
                 }
+                
                 case 'savePage': {
                     if (!request.batchId || !request.tabId || !request.url) {
                         sendResponse({ success: false, error: 'Missing batchId, tabId, or url for savePage action.' });
@@ -319,14 +367,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     }
 
                     // Inject script to get HTML content
-                    const injectionResults = await chrome.scripting.executeScript({
-                        target: { tabId: request.tabId },
-                        func: () => document.documentElement.outerHTML,
-                    });
+                    let injectionResults;
+                    try {
+                        injectionResults = await chrome.scripting.executeScript({
+                            target: { tabId: request.tabId },
+                            func: () => document.documentElement.outerHTML,
+                        });
+                    } catch (injectionError) {
+                        console.error('Script injection failed:', injectionError);
+                        sendResponse({ 
+                            success: false, 
+                            error: 'Could not retrieve page HTML. The page may restrict extensions or require special permissions.' 
+                        });
+                        return;
+                    }
 
-                    if (chrome.runtime.lastError || !injectionResults || injectionResults.length === 0 || !injectionResults[0].result) {
-                        console.error('Script injection failed:', chrome.runtime.lastError || 'No result from script');
-                        sendResponse({ success: false, error: 'Could not retrieve page HTML. Check console for details. Does the page forbid extensions?' });
+                    if (!injectionResults || injectionResults.length === 0 || !injectionResults[0].result) {
+                        console.error('Script injection returned no result');
+                        sendResponse({ success: false, error: 'Could not retrieve page HTML content.' });
                         return;
                     }
 
@@ -346,15 +404,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     sendResponse(saveResult);
                     break;
                 }
-                 case 'exportBatch': {
+                
+                case 'exportBatch': {
                     if (!request.batchId || !request.batchName) {
-                         sendResponse({ success: false, error: 'Missing batchId or batchName for export.' });
-                         return;
+                        sendResponse({ success: false, error: 'Missing batchId or batchName for export.' });
+                        return;
                     }
+                    
                     const pages = await getPagesForBatch(request.batchId);
-                    if (!pages) {
-                         sendResponse({ success: false, error: 'Failed to retrieve pages for export.' });
-                         return;
+                    if (!pages || pages.length === 0) {
+                        sendResponse({ success: false, error: 'No pages found in this batch to export.' });
+                        return;
                     }
 
                     // Format as JSON Lines
@@ -364,42 +424,49 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
                     // Generate filename
                     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-                     // Sanitize batch name for filename
                     const safeBatchName = request.batchName.replace(/[^a-z0-9_-]/gi, '_').substring(0, 50);
                     const filename = `webgrab_batch_${safeBatchName}_${request.batchId.substring(0, 8)}_${timestamp}.jsonl`;
 
-
-                    // Use downloads API
-                     chrome.downloads.download({
-                         url: blobUrl,
-                         filename: filename,
-                         saveAs: true // Prompt user for save location
-                     }, (downloadId) => {
-                         if (chrome.runtime.lastError) {
-                             console.error("Download failed:", chrome.runtime.lastError);
-                             sendResponse({ success: false, error: `Download initiation failed: ${chrome.runtime.lastError.message}` });
-                             URL.revokeObjectURL(blobUrl); // Clean up blob URL even on failure
-                         } else {
-                             console.log("Download initiated with ID:", downloadId);
-                             // Success is implied, but we need to revoke the blob URL *after* the download might have started
-                             // There isn't a perfect callback for download *completion*, so revoke after a short delay
-                             setTimeout(() => URL.revokeObjectURL(blobUrl), 1000); // Clean up after 1 second
-                             sendResponse({ success: true });
-                         }
-                     });
-                    // Note: sendResponse might be called *before* the download completes,
-                    // but it needs to be called to close the message channel.
+                    // Use downloads API with better error handling
+                    try {
+                        await new Promise((resolve, reject) => {
+                            chrome.downloads.download({
+                                url: blobUrl,
+                                filename: filename,
+                                saveAs: true
+                            }, (downloadId) => {
+                                if (chrome.runtime.lastError) {
+                                    console.error("Download failed:", chrome.runtime.lastError);
+                                    reject(chrome.runtime.lastError);
+                                } else {
+                                    console.log("Download initiated with ID:", downloadId);
+                                    resolve(downloadId);
+                                }
+                            });
+                        });
+                        
+                        // Clean up blob URL after brief delay
+                        setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+                        sendResponse({ success: true });
+                    } catch (downloadError) {
+                        URL.revokeObjectURL(blobUrl);
+                        sendResponse({ 
+                            success: false, 
+                            error: `Download failed: ${downloadError.message}` 
+                        });
+                    }
                     break;
-                 }
-                 case 'deleteBatch': {
+                }
+                
+                case 'deleteBatch': {
                     if (!request.batchId) {
-                         sendResponse({ success: false, error: 'Missing batchId for delete.' });
-                         return;
+                        sendResponse({ success: false, error: 'Missing batchId for delete.' });
+                        return;
                     }
                     const deleteResult = await deleteBatchAndPages(request.batchId);
                     sendResponse(deleteResult);
                     break;
-                 }
+                }
 
                 default:
                     console.warn("Unknown action received:", request.action);
@@ -407,15 +474,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             }
         } catch (error) {
             console.error("Error processing message:", error);
-            sendResponse({ success: false, error: error.message || 'An unexpected error occurred in the background script.' });
+            sendResponse({ 
+                success: false, 
+                error: error.message || 'An unexpected error occurred in the background script.' 
+            });
         }
-    })(); // Immediately invoke the async function
+    })();
 
-    return true; // Indicates that the response is sent asynchronously
+    return true; // Keep message channel open for async response
 });
 
-// Initial DB opening when the service worker starts
-openDb().catch(err => console.error("Initial database open failed:", err));
-
-console.log("Background script loaded and listener attached.");
-
+console.log("Background service worker loaded and listener attached.");
